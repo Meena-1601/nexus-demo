@@ -1,0 +1,108 @@
+name: Build and Push to Nexus
+
+on:
+  workflow_dispatch:
+
+jobs:
+
+  build-and-push:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # --------------------------------------------------
+      # 1. Checkout source code
+      # --------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+
+      # --------------------------------------------------
+      # 2. Setup Java
+      # --------------------------------------------------
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+
+      # --------------------------------------------------
+      # 3. Configure Maven to use Nexus
+      # --------------------------------------------------
+      - name: Configure Maven
+        run: |
+          mkdir -p ~/.m2
+
+          cat > ~/.m2/settings.xml <<EOF
+          <settings>
+
+            <servers>
+
+              <server>
+                <id>nexus</id>
+                <username>${{ secrets.NEXUS_USERNAME }}</username>
+                <password>${{ secrets.NEXUS_PASSWORD }}</password>
+              </server>
+
+            </servers>
+
+            <mirrors>
+
+              <mirror>
+                <id>nexus</id>
+                <name>Personal Nexus</name>
+                <url>${{ secrets.NEXUS_MAVEN_URL }}</url>
+                <mirrorOf>*</mirrorOf>
+              </mirror>
+
+            </mirrors>
+
+          </settings>
+          EOF
+
+
+      # --------------------------------------------------
+      # 4. Download dependencies + Build application
+      # --------------------------------------------------
+      - name: Maven Build
+        run: |
+          mvn clean package -DskipTests
+
+
+      # --------------------------------------------------
+      # 5. Verify generated JAR
+      # --------------------------------------------------
+      - name: Verify build artifact
+        run: |
+          ls -lh target/
+
+
+      # --------------------------------------------------
+      # 6. Login to Nexus Docker Registry
+      # --------------------------------------------------
+      - name: Login to Nexus Docker Registry
+        run: |
+          echo "${{ secrets.NEXUS_PASSWORD }}" | \
+          docker login "${{ secrets.NEXUS_DOCKER_URL }}" \
+          --username "${{ secrets.NEXUS_USERNAME }}" \
+          --password-stdin
+
+
+      # --------------------------------------------------
+      # 7. Build Docker image
+      # --------------------------------------------------
+      - name: Build Docker image
+        run: |
+          docker build \
+            -t "${{ secrets.NEXUS_DOCKER_URL }}/github-actions-nexus-demo:${{ github.sha }}" .
+
+
+      # --------------------------------------------------
+      # 8. Push Docker image to Nexus
+      # --------------------------------------------------
+      - name: Push Docker image to Nexus
+        run: |
+          docker push \
+            "${{ secrets.NEXUS_DOCKER_URL }}/github-actions-nexus-demo:${{ github.sha }}"
