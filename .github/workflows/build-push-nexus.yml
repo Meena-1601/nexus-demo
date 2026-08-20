@@ -1,7 +1,35 @@
 name: Build and Push to Nexus
 
 on:
+
   workflow_dispatch:
+
+    inputs:
+
+      BRANCH_NAME:
+        description: 'Enter the branch name'
+        required: true
+        default: 'main'
+        type: string
+
+      MAVEN_GOAL:
+        description: 'Enter the Maven goal'
+        required: true
+        default: '-U clean compile package'
+        type: string
+
+      RUN_SONAR:
+        description: 'Run SonarQube analysis'
+        required: true
+        default: false
+        type: boolean
+
+      DOCKER:
+        description: 'Run Docker build and push'
+        required: true
+        default: true
+        type: boolean
+
 
 jobs:
 
@@ -11,16 +39,20 @@ jobs:
 
     steps:
 
-      # --------------------------------------------------
-      # 1. Checkout source code
-      # --------------------------------------------------
+      # ------------------------------------------
+      # 1. Checkout selected branch
+      # ------------------------------------------
+
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.BRANCH_NAME }}
 
 
-      # --------------------------------------------------
+      # ------------------------------------------
       # 2. Setup Java
-      # --------------------------------------------------
+      # ------------------------------------------
+
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
@@ -28,14 +60,17 @@ jobs:
           java-version: '17'
 
 
-      # --------------------------------------------------
-      # 3. Configure Maven to use Nexus
-      # --------------------------------------------------
+      # ------------------------------------------
+      # 3. Configure Maven
+      # ------------------------------------------
+
       - name: Configure Maven
         run: |
+
           mkdir -p ~/.m2
 
           cat > ~/.m2/settings.xml <<EOF
+
           <settings>
 
             <servers>
@@ -60,49 +95,68 @@ jobs:
             </mirrors>
 
           </settings>
+
           EOF
 
 
-      # --------------------------------------------------
-      # 4. Download dependencies + Build application
-      # --------------------------------------------------
+      # ------------------------------------------
+      # 4. Maven Build
+      # ------------------------------------------
+
       - name: Maven Build
         run: |
-          mvn clean package -DskipTests
+          mvn ${{ inputs.MAVEN_GOAL }}
 
 
-      # --------------------------------------------------
-      # 5. Verify generated JAR
-      # --------------------------------------------------
-      - name: Verify build artifact
+      # ------------------------------------------
+      # 5. SonarQube
+      # ------------------------------------------
+
+      - name: SonarQube Analysis
+        if: ${{ inputs.RUN_SONAR == true }}
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         run: |
-          ls -lh target/
+
+          mvn sonar:sonar \
+            -Dsonar.host.url="$SONAR_HOST_URL" \
+            -Dsonar.token="$SONAR_TOKEN"
 
 
-      # --------------------------------------------------
+      # ------------------------------------------
       # 6. Login to Nexus Docker Registry
-      # --------------------------------------------------
+      # ------------------------------------------
+
       - name: Login to Nexus Docker Registry
+        if: ${{ inputs.DOCKER == true }}
         run: |
+
           echo "${{ secrets.NEXUS_PASSWORD }}" | \
           docker login "${{ secrets.NEXUS_DOCKER_URL }}" \
-          --username "${{ secrets.NEXUS_USERNAME }}" \
-          --password-stdin
+            --username "${{ secrets.NEXUS_USERNAME }}" \
+            --password-stdin
 
 
-      # --------------------------------------------------
-      # 7. Build Docker image
-      # --------------------------------------------------
+      # ------------------------------------------
+      # 7. Docker Build
+      # ------------------------------------------
+
       - name: Build Docker image
+        if: ${{ inputs.DOCKER == true }}
         run: |
+
           docker build \
             -t "${{ secrets.NEXUS_DOCKER_URL }}/github-actions-nexus-demo:${{ github.sha }}" .
 
 
-      # --------------------------------------------------
+      # ------------------------------------------
       # 8. Push Docker image to Nexus
-      # --------------------------------------------------
+      # ------------------------------------------
+
       - name: Push Docker image to Nexus
+        if: ${{ inputs.DOCKER == true }}
         run: |
+
           docker push \
             "${{ secrets.NEXUS_DOCKER_URL }}/github-actions-nexus-demo:${{ github.sha }}"
